@@ -1,6 +1,6 @@
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from trl import SFTTrainer
 import os
 import json
@@ -10,26 +10,24 @@ MODEL_ID = "HuggingFaceTB/SmolLM-135M"
 DATA_PATH = "data/processed/casual_chat_train.jsonl"
 OUTPUT_DIR = "models/chat-llm-base"
 
+# Explicit ChatML Template String
+CHAT_TEMPLATE = (
+    "{% for message in messages %}"
+    "{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}"
+    "{{ '<|im_start|>assistant\\n' }}"
+    "{% endif %}"
+)
+
 def train():
     print(f"Starting SFT training for {MODEL_ID}...")
     
     # 1. Load Tokenizer and Model
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    
-    # FIX: SmolLM might not have a default chat template. 
-    # We manually set a standard ChatML template to avoid ValueError in SFTTrainer.
-    if tokenizer.chat_template is None:
-        print("No chat template found for model. Setting default ChatML template...")
-        tokenizer.chat_template = (
-            "{% for message in messages %}"
-            "{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
-            "{% endfor %}"
-            "{% if add_generation_prompt %}"
-            "{{ '<|im_start|>assistant\\n' }}"
-            "{% endif %}"
-        )
-
     tokenizer.pad_token = tokenizer.eos_token
+    # We still set it on the tokenizer just in case
+    tokenizer.chat_template = CHAT_TEMPLATE
     
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
@@ -41,6 +39,8 @@ def train():
     dataset = load_dataset("json", data_files=DATA_PATH, split="train")
 
     # 3. Setup SFT Trainer
+    # FIX: We pass the chat_template EXPLICITLY to the trainer to override any 
+    # internal tokenizer failures and avoid the ValueError.
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
@@ -55,7 +55,11 @@ def train():
             report_to="none",
             fp16=torch.cuda.is_available(),
         ),
+        processing_class=tokenizer,
     )
+    
+    # Manually assign the template to the trainer's processing class just to be safe
+    trainer.processing_class.chat_template = CHAT_TEMPLATE
 
     print("Beginning training loop...")
     trainer.train()
