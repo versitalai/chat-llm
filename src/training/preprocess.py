@@ -98,7 +98,7 @@ def main():
     
     for ds_name, config in DATASET_CONFIG.items():
         print(f"Processing {ds_name}...")
-        dataset = load_dataset(config['path'], split=config['split'])
+        dataset = load_dataset(config['path'], split=config['split'], trust_remote_code=True)
         
         # Dynamically get the mapping function
         map_func = globals()[config['map_fn']]
