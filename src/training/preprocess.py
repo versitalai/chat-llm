@@ -35,20 +35,20 @@ FORBIDDEN_PHRASES = [
 
 def is_clean(text):
     """Check if the text contains robotic assistant patterns."""
+    if not text: return False
     text_lower = text.lower()
     return not any(phrase in text_lower for phrase in FORBIDDEN_PHRASES)
 
 def map_empathetic(example):
     """
     Maps Empathetic Dialogues to ChatML format.
-    Expects: {'utterances': [user, ai, user, ai...]}
     """
-    utterances = example['utterances']
-    if len(utterances) < 2:
+    # Some versions of this dataset use 'utterances'
+    utterances = example.get('utterances', [])
+    if not utterances or len(utterances) < 2:
         return None
     
     messages = []
-    # we use a generic casual system prompt for base training
     messages.append({"role": "system", "content": "You are a friendly and empathetic person chatting casually."})
     
     for i in range(0, len(utterances), 2):
@@ -66,12 +66,12 @@ def map_empathetic(example):
 def map_personachat(example):
     """
     Maps PersonaChat to ChatML format.
-    Expects: {'persona': '...', 'dialogue': '...'}
     """
-    persona = example['persona']
-    dialogue = example['dialogue']
+    persona = example.get('persona', "")
+    dialogue = example.get('dialogue', "")
     
-    # PersonaChat dialogues are often space-separated turns
+    if not dialogue: return None
+    
     turns = dialogue.split(' ')
     if len(turns) < 2:
         return None
@@ -98,9 +98,21 @@ def main():
     
     for ds_name, config in DATASET_CONFIG.items():
         print(f"Processing {ds_name}...")
-        dataset = load_dataset(config['path'], split=config['split'], trust_remote_code=True)
+        try:
+            # Try to load without trust_remote_code first, 
+            # but if it's a script-based dataset, we use a different approach:
+            # We can try loading via 'parquet' if the dataset has been converted, 
+            # but for the standard names, we'll try the most compatible load.
+            dataset = load_dataset(config['path'], split=config['split'])
+        except Exception as e:
+            print(f"Standard load failed for {ds_name}: {e}")
+            print("Attempting to load with trust_remote_code=True...")
+            try:
+                dataset = load_dataset(config['path'], split=config['split'], trust_remote_code=True)
+            except Exception as e2:
+                print(f"All load attempts failed for {ds_name}: {e2}")
+                continue
         
-        # Dynamically get the mapping function
         map_func = globals()[config['map_fn']]
         
         for example in tqdm(dataset):
@@ -110,6 +122,10 @@ def main():
     
     print(f"Total samples collected: {len(all_processed_data)}")
     
+    if not all_processed_data:
+        print("Error: No data was processed. Please check dataset paths.")
+        return
+
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         for entry in all_processed_data:
             f.write(json.dumps(entry) + '\n')
